@@ -1,0 +1,244 @@
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { usePrinterStore } from '@/stores/printer'
+import { usePrintService } from '@/composables/usePrint'
+
+const printerStore = usePrinterStore()
+const { printText, printTestPage, isPrinting } = usePrintService()
+
+const textToPrint = ref('')
+const textAlign = ref<'left' | 'center' | 'right'>('left')
+const textBold = ref(false)
+const textSize = ref<'normal' | 'double'>('normal')
+
+const activeTab = ref<'text' | 'image' | 'barcode'>('text')
+
+const canPrint = computed(() => printerStore.isConnected && !isPrinting.value)
+
+async function handlePrintText() {
+  if (!canPrint.value || !textToPrint.value.trim()) return
+
+  try {
+    await printText(textToPrint.value, {
+      align: textAlign.value,
+      bold: textBold.value,
+      doubleSize: textSize.value === 'double'
+    })
+    textToPrint.value = ''
+  } catch (err) {
+    printerStore.setError(err instanceof Error ? err.message : 'Print failed')
+  }
+}
+
+async function handleTestPrint() {
+  if (!canPrint.value) return
+
+  try {
+    await printTestPage()
+  } catch (err) {
+    printerStore.setError(err instanceof Error ? err.message : 'Test print failed')
+  }
+}
+</script>
+
+<template>
+  <div class="p-4 space-y-6">
+    <!-- Not Connected Warning -->
+    <div v-if="!printerStore.isConnected" class="card bg-yellow-50 border-yellow-200">
+      <div class="flex items-center gap-3 text-yellow-700">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <div>
+          <p class="font-medium">No Printer Connected</p>
+          <p class="text-sm">Please connect a printer first</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="flex border-b border-gray-200">
+      <button
+        @click="activeTab = 'text'"
+        class="flex-1 py-3 text-center font-medium transition-colors border-b-2"
+        :class="activeTab === 'text' ? 'text-primary-600 border-primary-600' : 'text-gray-500 border-transparent'"
+      >
+        Text
+      </button>
+      <button
+        @click="activeTab = 'image'"
+        class="flex-1 py-3 text-center font-medium transition-colors border-b-2"
+        :class="activeTab === 'image' ? 'text-primary-600 border-primary-600' : 'text-gray-500 border-transparent'"
+      >
+        Image
+      </button>
+      <button
+        @click="activeTab = 'barcode'"
+        class="flex-1 py-3 text-center font-medium transition-colors border-b-2"
+        :class="activeTab === 'barcode' ? 'text-primary-600 border-primary-600' : 'text-gray-500 border-transparent'"
+      >
+        Barcode
+      </button>
+    </div>
+
+    <!-- Text Tab -->
+    <div v-if="activeTab === 'text'" class="space-y-4">
+      <div class="card">
+        <h3 class="font-semibold text-gray-800 mb-3">Text Formatting</h3>
+
+        <!-- Alignment -->
+        <div class="flex gap-2 mb-4">
+          <button
+            @click="textAlign = 'left'"
+            class="flex-1 py-2 rounded-lg border transition-colors"
+            :class="textAlign === 'left' ? 'bg-primary-100 border-primary-500 text-primary-700' : 'border-gray-300'"
+          >
+            <svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10M4 18h14"/>
+            </svg>
+          </button>
+          <button
+            @click="textAlign = 'center'"
+            class="flex-1 py-2 rounded-lg border transition-colors"
+            :class="textAlign === 'center' ? 'bg-primary-100 border-primary-500 text-primary-700' : 'border-gray-300'"
+          >
+            <svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M7 12h10M5 18h14"/>
+            </svg>
+          </button>
+          <button
+            @click="textAlign = 'right'"
+            class="flex-1 py-2 rounded-lg border transition-colors"
+            :class="textAlign === 'right' ? 'bg-primary-100 border-primary-500 text-primary-700' : 'border-gray-300'"
+          >
+            <svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M10 12h10M6 18h14"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Style Options -->
+        <div class="flex gap-2 mb-4">
+          <button
+            @click="textBold = !textBold"
+            class="flex-1 py-2 rounded-lg border transition-colors font-bold"
+            :class="textBold ? 'bg-primary-100 border-primary-500 text-primary-700' : 'border-gray-300'"
+          >
+            B
+          </button>
+          <button
+            @click="textSize = textSize === 'normal' ? 'double' : 'normal'"
+            class="flex-1 py-2 rounded-lg border transition-colors"
+            :class="textSize === 'double' ? 'bg-primary-100 border-primary-500 text-primary-700' : 'border-gray-300'"
+          >
+            2x
+          </button>
+        </div>
+
+        <!-- Text Input -->
+        <textarea
+          v-model="textToPrint"
+          class="input h-32 resize-none"
+          placeholder="Enter text to print..."
+        ></textarea>
+      </div>
+
+      <button
+        @click="handlePrintText"
+        :disabled="!canPrint || !textToPrint.trim()"
+        class="btn btn-primary w-full py-3"
+        :class="{ 'opacity-50 cursor-not-allowed': !canPrint || !textToPrint.trim() }"
+      >
+        <svg v-if="isPrinting" class="w-5 h-5 mr-2 inline animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        {{ isPrinting ? 'Printing...' : 'Print Text' }}
+      </button>
+    </div>
+
+    <!-- Image Tab -->
+    <div v-if="activeTab === 'image'" class="space-y-4">
+      <div class="card">
+        <h3 class="font-semibold text-gray-800 mb-3">Print Image</h3>
+        <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+          <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+            <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <p class="text-gray-500 mb-2">Tap to select an image</p>
+          <p class="text-xs text-gray-400">PNG, JPG up to 10MB</p>
+        </div>
+      </div>
+
+      <button
+        :disabled="!canPrint"
+        class="btn btn-primary w-full py-3 opacity-50 cursor-not-allowed"
+      >
+        Print Image
+      </button>
+    </div>
+
+    <!-- Barcode Tab -->
+    <div v-if="activeTab === 'barcode'" class="space-y-4">
+      <div class="card">
+        <h3 class="font-semibold text-gray-800 mb-3">Generate Barcode</h3>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Barcode Type</label>
+            <select class="input">
+              <option value="qr">QR Code</option>
+              <option value="code128">Code 128</option>
+              <option value="ean13">EAN-13</option>
+              <option value="code39">Code 39</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Content</label>
+            <input type="text" class="input" placeholder="Enter barcode content..." />
+          </div>
+        </div>
+      </div>
+
+      <button
+        :disabled="!canPrint"
+        class="btn btn-primary w-full py-3 opacity-50 cursor-not-allowed"
+      >
+        Print Barcode
+      </button>
+    </div>
+
+    <!-- Test Print Button -->
+    <div class="card">
+      <button
+        @click="handleTestPrint"
+        :disabled="!canPrint"
+        class="btn btn-secondary w-full"
+        :class="{ 'opacity-50 cursor-not-allowed': !canPrint }"
+      >
+        <svg class="w-5 h-5 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Test Print
+      </button>
+    </div>
+
+    <!-- Error Display -->
+    <div v-if="printerStore.error" class="card bg-red-50 border-red-200">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3 text-red-700">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span class="text-sm">{{ printerStore.error }}</span>
+        </div>
+        <button @click="printerStore.setError(null)" class="text-red-500">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>

@@ -32,3 +32,4 @@ dist-ssr
 .serena/
 dev-dist/
 release-key.jks
+*.idsig

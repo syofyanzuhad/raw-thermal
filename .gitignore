@@ -30,3 +30,4 @@ dist-ssr
 # Tool caches
 .playwright-mcp/
 .serena/
+dev-dist/

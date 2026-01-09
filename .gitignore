@@ -31,3 +31,4 @@ dist-ssr
 .playwright-mcp/
 .serena/
 dev-dist/
+release-key.jks

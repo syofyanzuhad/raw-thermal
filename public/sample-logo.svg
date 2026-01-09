@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="384" height="200" viewBox="0 0 384 200">
+  <!-- Background -->
+  <rect width="384" height="200" fill="white"/>
+
+  <!-- Printer Icon -->
+  <g transform="translate(142, 20)">
+    <!-- Printer body -->
+    <rect x="0" y="30" width="100" height="50" rx="8" fill="#1f2937" stroke="#111827" stroke-width="2"/>
+    <!-- Paper slot -->
+    <rect x="10" y="25" width="80" height="15" rx="3" fill="#374151"/>
+    <!-- Paper coming out -->
+    <rect x="20" y="5" width="60" height="25" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>
+    <!-- Paper lines -->
+    <line x1="28" y1="12" x2="72" y2="12" stroke="#9ca3af" stroke-width="2"/>
+    <line x1="28" y1="20" x2="60" y2="20" stroke="#9ca3af" stroke-width="2"/>
+    <!-- LED indicator -->
+    <circle cx="85" cy="50" r="5" fill="#22c55e"/>
+    <!-- Paper output -->
+    <rect x="25" y="75" width="50" height="20" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1"/>
+  </g>
+
+  <!-- Text: Raw Thermal -->
+  <text x="192" y="130" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#1f2937">Raw Thermal</text>
+
+  <!-- Tagline -->
+  <text x="192" y="155" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">Open Source Thermal Printer</text>
+
+  <!-- Decorative line -->
+  <line x1="92" y1="170" x2="292" y2="170" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="8,4"/>
+
+  <!-- Small icons -->
+  <g transform="translate(127, 178)">
+    <!-- Bluetooth icon -->
+    <path d="M6 2l6 5-4 3.5 4 3.5-6 5v-8l-4 3.5 4-3.5-4-3.5 4 3.5V2z" fill="#3b82f6" transform="scale(0.8)"/>
+  </g>
+  <text x="145" y="190" font-family="Arial, sans-serif" font-size="10" fill="#6b7280">Bluetooth</text>
+
+  <g transform="translate(197, 180)">
+    <!-- Print icon -->
+    <rect x="0" y="0" width="12" height="8" rx="1" fill="#3b82f6"/>
+    <rect x="2" y="6" width="8" height="6" fill="#3b82f6"/>
+  </g>
+  <text x="220" y="190" font-family="Arial, sans-serif" font-size="10" fill="#6b7280">58/80mm</text>
+</svg>

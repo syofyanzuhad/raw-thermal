@@ -28,6 +28,11 @@ const router = createRouter({
       path: '/file-print',
       name: 'file-print',
       component: () => import('@/views/FilePrintView.vue')
+    },
+    {
+      path: '/logs',
+      name: 'logs',
+      component: () => import('@/views/LogView.vue')
     }
   ]
 })

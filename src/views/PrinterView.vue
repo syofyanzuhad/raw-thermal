@@ -2,12 +2,19 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { usePrinterStore } from '@/stores/printer'
 import { useBluetoothService } from '@/composables/useBluetooth'
+import {
+  hasPendingPrintJobsNative,
+  clearPendingPrintJobsNative,
+  type PendingPrintJob
+} from '@/services/native/PrinterConfigBridge'
 
 const printerStore = usePrinterStore()
 const { startScan, stopScan, connect, disconnect, isAvailable, platformInfo } = useBluetoothService()
 
 const bluetoothAvailable = ref(true)
 const scanError = ref<string | null>(null)
+const pendingJobs = ref<PendingPrintJob[]>([])
+const hasPendingJob = ref(false)
 
 async function handleStartScan() {
   scanError.value = null
@@ -29,9 +36,33 @@ async function handleStopScan() {
 async function handleConnect(deviceId: string, name: string | null) {
   try {
     await connect(deviceId, name)
+    // After successful connect, check and process pending print jobs
+    if (hasPendingJob.value) {
+      await processPendingJobs()
+    }
   } catch (err) {
     printerStore.setError(err instanceof Error ? err.message : 'Failed to connect')
   }
+}
+
+async function checkPendingJobs() {
+  const result = await hasPendingPrintJobsNative()
+  hasPendingJob.value = result.hasPending
+  pendingJobs.value = result.jobs
+}
+
+async function processPendingJobs() {
+  // TODO: Process pending jobs by reading the PDF and printing
+  // For now, just clear them after connecting - actual printing will happen via native PrintService
+  console.log('[PrinterView] Processing pending jobs:', pendingJobs.value)
+  await clearPendingPrintJobsNative()
+  hasPendingJob.value = false
+  pendingJobs.value = []
+}
+
+function handlePendingPrintJobEvent() {
+  console.log('[PrinterView] Received pending print job event')
+  checkPendingJobs()
 }
 
 async function handleDisconnect() {
@@ -45,17 +76,37 @@ async function handleDisconnect() {
 onMounted(async () => {
   bluetoothAvailable.value = await isAvailable()
   printerStore.loadSavedPrinters()
+
+  // Check for pending print jobs
+  checkPendingJobs()
+
+  // Listen for pending print job events from native
+  window.addEventListener('pendingPrintJob', handlePendingPrintJobEvent)
 })
 
 onUnmounted(() => {
   if (printerStore.isScanning) {
     handleStopScan()
   }
+  window.removeEventListener('pendingPrintJob', handlePendingPrintJobEvent)
 })
 </script>
 
 <template>
   <div class="p-4 space-y-6">
+    <!-- Pending Print Job Banner -->
+    <div v-if="hasPendingJob" class="card bg-yellow-50 border-yellow-200">
+      <div class="flex items-start gap-3 text-yellow-700">
+        <svg class="w-6 h-6 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <div class="flex-1">
+          <p class="font-medium">Dokumen Menunggu Dicetak</p>
+          <p class="text-sm">{{ pendingJobs.length }} dokumen dalam antrian. Pilih printer untuk melanjutkan.</p>
+        </div>
+      </div>
+    </div>
+
     <!-- Platform Warning (Web Browser) -->
     <div v-if="platformInfo.isWeb && platformInfo.message" class="card bg-amber-50 border-amber-200">
       <div class="flex items-start gap-3 text-amber-700">

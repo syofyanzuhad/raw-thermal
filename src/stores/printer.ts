@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Printer, BluetoothDevice, ConnectionState, PrintJob } from '@/types/printer'
+import { syncPrinterConfigToNative, setCurrentPrinterNative } from '@/services/native/PrinterConfigBridge'
+import { useSettingsStore } from './settings'
 
 export const usePrinterStore = defineStore('printer', () => {
   // State
@@ -37,6 +39,8 @@ export const usePrinterStore = defineStore('printer', () => {
 
   function setCurrentPrinter(printer: Printer | null) {
     currentPrinter.value = printer
+    // Sync to native for Print Service
+    setCurrentPrinterNative(printer?.id ?? null)
   }
 
   function setConnectionState(state: ConnectionState) {
@@ -83,6 +87,17 @@ export const usePrinterStore = defineStore('printer', () => {
     }
     // Persist to localStorage
     localStorage.setItem('savedPrinters', JSON.stringify(savedPrinters.value))
+    // Sync to native for Print Service
+    syncToNative()
+  }
+
+  function syncToNative() {
+    const settingsStore = useSettingsStore()
+    syncPrinterConfigToNative(
+      savedPrinters.value,
+      currentPrinter.value?.id ?? null,
+      settingsStore.settings as unknown as Record<string, unknown>
+    )
   }
 
   function loadSavedPrinters() {
@@ -95,6 +110,8 @@ export const usePrinterStore = defineStore('printer', () => {
   function removeSavedPrinter(printerId: string) {
     savedPrinters.value = savedPrinters.value.filter(p => p.id !== printerId)
     localStorage.setItem('savedPrinters', JSON.stringify(savedPrinters.value))
+    // Sync to native for Print Service
+    syncToNative()
   }
 
   return {

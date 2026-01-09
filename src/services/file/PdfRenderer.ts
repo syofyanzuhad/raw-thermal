@@ -1,7 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist'
+import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
-// Set worker source - using CDN for simplicity
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
+// Set worker source - using local file via Vite's ?url import
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc
 
 export interface PdfDocument {
   numPages: number

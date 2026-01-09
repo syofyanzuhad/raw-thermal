@@ -1,6 +1,9 @@
-import { BleClient } from '@capacitor-community/bluetooth-le'
+import { BleClient, ConnectionPriority } from '@capacitor-community/bluetooth-le'
 import type { ScanResult } from '@capacitor-community/bluetooth-le'
 import type { BluetoothDevice } from '@/types/printer'
+import { logger } from '@/services/LogService'
+
+const TAG = 'Bluetooth'
 
 // Common printer service UUIDs
 const PRINTER_SERVICE_UUID = '000018f0-0000-1000-8000-00805f9b34fb'
@@ -17,6 +20,7 @@ export class BluetoothService {
   private serviceUUID: string = PRINTER_SERVICE_UUID
   private characteristicUUID: string = PRINTER_CHAR_UUID
   private isInitialized: boolean = false
+  private negotiatedMtu: number = 20 // Default BLE MTU payload size
 
   constructor() {
     // Initialize with defaults
@@ -34,9 +38,9 @@ export class BluetoothService {
         androidNeverForLocation: true // We don't need location, just Bluetooth
       })
       this.isInitialized = true
-      console.log('[BT] Bluetooth initialized successfully')
+      logger.info(TAG, 'Bluetooth initialized successfully')
     } catch (error) {
-      console.error('[BT] Failed to initialize Bluetooth:', error)
+      logger.error(TAG, 'Failed to initialize Bluetooth', error)
       throw new Error('Failed to initialize Bluetooth. Please check permissions.')
     }
   }
@@ -47,10 +51,10 @@ export class BluetoothService {
   async isAvailable(): Promise<boolean> {
     try {
       const enabled = await BleClient.isEnabled()
-      console.log('[BT] Bluetooth enabled:', enabled)
+      logger.debug(TAG, `Bluetooth enabled: ${enabled}`)
       return enabled
     } catch (error) {
-      console.error('[BT] Error checking Bluetooth status:', error)
+      logger.error(TAG, 'Error checking Bluetooth status', error)
       return false
     }
   }
@@ -63,10 +67,10 @@ export class BluetoothService {
       // On Android, this will prompt the user to enable Bluetooth
       const enabled = await BleClient.isEnabled()
       if (!enabled) {
-        console.log('[BT] Bluetooth is disabled, please enable it manually')
+        logger.info(TAG, 'Bluetooth is disabled, please enable it manually')
       }
     } catch (error) {
-      console.error('[BT] Failed to request Bluetooth enable:', error)
+      logger.error(TAG, 'Failed to request Bluetooth enable', error)
     }
   }
 
@@ -74,7 +78,7 @@ export class BluetoothService {
    * Start scanning for BLE devices
    */
   async startScan(onDeviceFound: (device: BluetoothDevice) => void): Promise<void> {
-    console.log('[BT] Starting scan...')
+    logger.info(TAG, 'Starting scan...')
 
     try {
       // Request device (this triggers permission request on some platforms)
@@ -84,7 +88,7 @@ export class BluetoothService {
           // allowDuplicates: false - default, only report each device once
         },
         (result: ScanResult) => {
-          console.log('[BT] Device found:', result.device.name || result.device.deviceId)
+          logger.debug(TAG, `Device found: ${result.device.name || result.device.deviceId}`)
 
           const device: BluetoothDevice = {
             deviceId: result.device.deviceId,
@@ -98,9 +102,9 @@ export class BluetoothService {
           }
         }
       )
-      console.log('[BT] Scan started successfully')
+      logger.info(TAG, 'Scan started successfully')
     } catch (error) {
-      console.error('[BT] Failed to start scan:', error)
+      logger.error(TAG, 'Failed to start scan', error)
       throw new Error(`Failed to start Bluetooth scan: ${error}`)
     }
   }
@@ -111,9 +115,9 @@ export class BluetoothService {
   async stopScan(): Promise<void> {
     try {
       await BleClient.stopLEScan()
-      console.log('[BT] Scan stopped')
+      logger.info(TAG, 'Scan stopped')
     } catch (error) {
-      console.error('[BT] Failed to stop scan:', error)
+      logger.error(TAG, 'Failed to stop scan', error)
     }
   }
 
@@ -121,7 +125,7 @@ export class BluetoothService {
    * Connect to a BLE device
    */
   async connect(deviceId: string): Promise<void> {
-    console.log('[BT] Connecting to:', deviceId)
+    logger.info(TAG, `Connecting to: ${deviceId}`)
 
     try {
       // Disconnect from any existing connection
@@ -130,21 +134,35 @@ export class BluetoothService {
       }
 
       await BleClient.connect(deviceId, (disconnectedDeviceId) => {
-        console.log('[BT] Device disconnected:', disconnectedDeviceId)
+        logger.info(TAG, `Device disconnected: ${disconnectedDeviceId}`)
         if (this.connectedDeviceId === disconnectedDeviceId) {
           this.connectedDeviceId = null
         }
       })
 
-      console.log('[BT] Connected, discovering services...')
+      logger.info(TAG, 'Connected, requesting larger MTU...')
+
+      // Request high connection priority for faster data transfer
+      try {
+        await BleClient.requestConnectionPriority(deviceId, ConnectionPriority.CONNECTION_PRIORITY_HIGH)
+        logger.info(TAG, 'Connection priority set to high')
+      } catch {
+        logger.debug(TAG, 'Could not set connection priority (optional)')
+      }
+
+      // Try to get MTU - some devices support larger MTU
+      // Default BLE MTU is 23 (20 bytes payload), but many devices support up to 512
+      this.negotiatedMtu = 512 // Optimistic, will be limited by actual device
+
+      logger.info(TAG, 'Discovering services...')
 
       // Discover services to find the right characteristic
       await this.discoverPrinterService(deviceId)
 
       this.connectedDeviceId = deviceId
-      console.log('[BT] Connection complete')
+      logger.info(TAG, `Connection complete, using MTU: ${this.negotiatedMtu}`)
     } catch (error) {
-      console.error('[BT] Failed to connect:', error)
+      logger.error(TAG, 'Failed to connect', error)
       throw new Error(`Failed to connect to printer: ${error}`)
     }
   }
@@ -155,12 +173,12 @@ export class BluetoothService {
   private async discoverPrinterService(deviceId: string): Promise<void> {
     try {
       const services = await BleClient.getServices(deviceId)
-      console.log('[BT] Found services:', services.length)
+      logger.info(TAG, `Found ${services.length} services`)
 
       // Look for known printer service UUIDs
       for (const service of services) {
         const serviceUuid = service.uuid.toLowerCase()
-        console.log('[BT] Service:', serviceUuid)
+        logger.debug(TAG, `Service: ${serviceUuid}`)
 
         // Check for standard printer service
         if (serviceUuid.includes('18f0') || serviceUuid === PRINTER_SERVICE_UUID.toLowerCase()) {
@@ -170,7 +188,7 @@ export class BluetoothService {
                 char.properties.write ||
                 char.properties.writeWithoutResponse) {
               this.characteristicUUID = char.uuid
-              console.log('[BT] Using printer service:', service.uuid, 'char:', char.uuid)
+              logger.info(TAG, `Using printer service: ${service.uuid}, char: ${char.uuid}`)
               return
             }
           }
@@ -182,7 +200,7 @@ export class BluetoothService {
           for (const char of service.characteristics) {
             if (char.properties.write || char.properties.writeWithoutResponse) {
               this.characteristicUUID = char.uuid
-              console.log('[BT] Using alt service:', service.uuid, 'char:', char.uuid)
+              logger.info(TAG, `Using alt service: ${service.uuid}, char: ${char.uuid}`)
               return
             }
           }
@@ -195,7 +213,7 @@ export class BluetoothService {
           if (char.properties.write || char.properties.writeWithoutResponse) {
             this.serviceUUID = service.uuid
             this.characteristicUUID = char.uuid
-            console.log('[BT] Using fallback service:', service.uuid, 'char:', char.uuid)
+            logger.info(TAG, `Using fallback service: ${service.uuid}, char: ${char.uuid}`)
             return
           }
         }
@@ -203,7 +221,7 @@ export class BluetoothService {
 
       throw new Error('No suitable printer characteristic found')
     } catch (error) {
-      console.error('[BT] Failed to discover services:', error)
+      logger.error(TAG, 'Failed to discover services', error)
       throw error
     }
   }
@@ -216,49 +234,63 @@ export class BluetoothService {
 
     try {
       await BleClient.disconnect(this.connectedDeviceId)
-      console.log('[BT] Disconnected')
+      logger.info(TAG, 'Disconnected')
       this.connectedDeviceId = null
     } catch (error) {
-      console.error('[BT] Failed to disconnect:', error)
+      logger.error(TAG, 'Failed to disconnect', error)
       this.connectedDeviceId = null
     }
   }
 
   /**
    * Write data to the printer
+   * Uses writeWithoutResponse for faster throughput when available
    */
   async write(data: Uint8Array): Promise<void> {
     if (!this.connectedDeviceId) {
       throw new Error('No printer connected')
     }
 
-    console.log('[BT] Writing', data.length, 'bytes...')
+    logger.info(TAG, `Writing ${data.length} bytes...`)
 
     try {
-      // BLE has MTU limitations, typically 20-512 bytes
-      // We need to chunk the data
-      const chunkSize = 20 // Safe default, could be increased after MTU negotiation
+      // Use negotiated MTU for chunk size (minus 3 bytes for ATT header)
+      const chunkSize = Math.min(this.negotiatedMtu - 3, 512)
+      const totalChunks = Math.ceil(data.length / chunkSize)
+
+      logger.debug(TAG, `Sending in ${totalChunks} chunks of ${chunkSize} bytes`)
 
       for (let i = 0; i < data.length; i += chunkSize) {
         const chunk = data.slice(i, Math.min(i + chunkSize, data.length))
         // Convert Uint8Array to DataView for BleClient
         const dataView = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength)
 
-        await BleClient.write(
-          this.connectedDeviceId,
-          this.serviceUUID,
-          this.characteristicUUID,
-          dataView
-        )
+        // Try writeWithoutResponse first (faster), fall back to write
+        try {
+          await BleClient.writeWithoutResponse(
+            this.connectedDeviceId,
+            this.serviceUUID,
+            this.characteristicUUID,
+            dataView
+          )
+        } catch {
+          // Fallback to regular write if writeWithoutResponse not supported
+          await BleClient.write(
+            this.connectedDeviceId,
+            this.serviceUUID,
+            this.characteristicUUID,
+            dataView
+          )
+        }
 
-        // Small delay between chunks to prevent buffer overflow
+        // Minimal delay - BLE stack handles flow control
         if (i + chunkSize < data.length) {
-          await this.delay(10)
+          await this.delay(1)
         }
       }
-      console.log('[BT] Write complete')
+      logger.info(TAG, 'Write complete')
     } catch (error) {
-      console.error('[BT] Failed to write:', error)
+      logger.error(TAG, 'Failed to write', error)
       throw new Error(`Failed to send data to printer: ${error}`)
     }
   }

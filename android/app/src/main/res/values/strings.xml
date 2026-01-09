@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Raw Thermal</string>
+    <string name="title_activity_main">Raw Thermal</string>
+    <string name="package_name">com.rawthermal.app</string>
+    <string name="custom_url_scheme">com.rawthermal.app</string>
+</resources>

@@ -1,10 +1,25 @@
 <script setup lang="ts">
 import { RouterView, RouterLink, useRoute } from 'vue-router'
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { usePrinterStore } from '@/stores/printer'
+import { Capacitor } from '@capacitor/core'
+import { StatusBar, Style } from '@capacitor/status-bar'
 
 const route = useRoute()
 const printerStore = usePrinterStore()
+
+onMounted(async () => {
+  // Configure status bar for native platforms
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await StatusBar.setStyle({ style: Style.Light })
+      await StatusBar.setBackgroundColor({ color: '#2563eb' }) // primary-600
+      await StatusBar.setOverlaysWebView({ overlay: false })
+    } catch (e) {
+      console.log('StatusBar configuration failed:', e)
+    }
+  }
+})
 
 const navItems = [
   { path: '/', name: 'Home', icon: 'home' },
@@ -85,9 +100,10 @@ const connectionStatus = computed(() => {
 
 <style scoped>
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  /* Fallback padding for Android + safe area for iOS */
+  padding-top: max(env(safe-area-inset-top, 0px), 0px);
 }
 .safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
 }
 </style>

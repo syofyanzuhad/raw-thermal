@@ -33,7 +33,7 @@ class ThermalPrintService : PrintService() {
         private const val PAPER_WIDTH_80MM = 576  // 72mm printable * 8 dots/mm
     }
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var configManager: PrinterConfigManager
     private val bluetoothManager by lazy { BluetoothPrinterManager(this) }
 
@@ -73,37 +73,44 @@ class ThermalPrintService : PrintService() {
     /**
      * Save print job to pending queue and block it
      */
-    private fun savePendingJob(printJob: PrintJob) {
+    private suspend fun savePendingJob(printJob: PrintJob) {
         try {
-            // Copy document data to temp file
+            // Get PrintJob info on main thread
+            val jobId = printJob.id.toString()
+            val jobTitle = printJob.info.label ?: "Print Job"
             val document = printJob.document
             val fd = document.data
+
             if (fd == null) {
                 Log.e(TAG, "No document data to save")
                 printJob.fail("No document data")
                 return
             }
 
-            val tempFile = File(cacheDir, "pending_job_${printJob.id}.pdf")
-            fd.use { pfd ->
-                val inputStream = android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd)
-                FileOutputStream(tempFile).use { outputStream ->
-                    inputStream.copyTo(outputStream)
+            // Do file IO on IO dispatcher
+            val tempFilePath = withContext(Dispatchers.IO) {
+                val tempFile = File(cacheDir, "pending_job_${jobId}.pdf")
+                fd.use { pfd ->
+                    val inputStream = android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd)
+                    FileOutputStream(tempFile).use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
                 }
+                tempFile.absolutePath
             }
 
             // Save job metadata
             val pendingJob = PendingPrintJob(
-                id = printJob.id.toString(),
-                documentPath = tempFile.absolutePath,
+                id = jobId,
+                documentPath = tempFilePath,
                 timestamp = System.currentTimeMillis(),
-                title = printJob.info.label ?: "Print Job"
+                title = jobTitle
             )
             configManager.savePendingJob(pendingJob)
 
             Log.d(TAG, "Saved pending job: ${pendingJob.id} to ${pendingJob.documentPath}")
 
-            // Block the job (keeps it in queue without failing)
+            // Block the job (keeps it in queue without failing) - must be on main thread
             printJob.block("Waiting for printer setup")
 
         } catch (e: Exception) {
@@ -128,9 +135,11 @@ class ThermalPrintService : PrintService() {
      * Process a queued print job with a specific printer
      */
     private suspend fun processPrintJob(printJob: PrintJob, printerConfig: PrinterConfig) {
-        Log.d(TAG, "Processing print job: ${printJob.id}")
+        // Get PrintJob info on main thread
+        val jobId = printJob.id.toString()
+        Log.d(TAG, "Processing print job: $jobId")
 
-        // Start the job
+        // Start the job - must be on main thread
         printJob.start()
 
         try {
@@ -145,74 +154,78 @@ class ThermalPrintService : PrintService() {
 
             Log.d(TAG, "Using printer: ${printerConfig.name}, paper width: ${settings.defaultPaperWidth}mm ($paperWidth dots)")
 
-            // Check Bluetooth
-            if (!bluetoothManager.isBluetoothEnabled()) {
-                throw Exception("Bluetooth is disabled")
-            }
+            // Get document data on main thread
+            val document = printJob.document
+            val fd = document.data
+                ?: throw Exception("No document data")
 
-            // Connect to printer
-            Log.d(TAG, "Connecting to printer: ${printerConfig.address}")
-            bluetoothManager.connect(printerConfig.address).getOrThrow()
-
-            try {
-                // Get the print document
-                val document = printJob.document
-                val fd = document.data
-                    ?: throw Exception("No document data")
-
-                // Process the PDF
-                fd.use { pfd ->
-                    val pdfRenderer = ThermalPdfRenderer(pfd)
-
-                    Log.d(TAG, "PDF has ${pdfRenderer.pageCount} pages")
-
-                    pdfRenderer.use {
-                        for (pageIndex in 0 until pdfRenderer.pageCount) {
-                            Log.d(TAG, "Processing page ${pageIndex + 1}/${pdfRenderer.pageCount}")
-
-                            // Render page to thermal format
-                            val thermalData = pdfRenderer.renderPageToThermal(pageIndex, paperWidth)
-
-                            // Encode to ESC/POS
-                            val encoder = EscPosEncoder()
-                                .initialize()
-                                .image(thermalData.data, thermalData.width, thermalData.height)
-                                .feed(settings.feedLinesAfterPrint)
-
-                            // Add cut between pages (except last)
-                            if (settings.autoCut && pageIndex < pdfRenderer.pageCount - 1) {
-                                encoder.cut()
-                            }
-
-                            // Send to printer
-                            bluetoothManager.write(encoder.encode()).getOrThrow()
-
-                            // Small delay between pages
-                            if (pageIndex < pdfRenderer.pageCount - 1) {
-                                delay(500)
-                            }
-                        }
-
-                        // Final cut if enabled
-                        if (settings.autoCut) {
-                            val finalEncoder = EscPosEncoder()
-                                .feed(2)
-                                .cut()
-                            bluetoothManager.write(finalEncoder.encode()).getOrThrow()
-                        }
-                    }
+            // Do all IO operations on IO dispatcher
+            withContext(Dispatchers.IO) {
+                // Check Bluetooth
+                if (!bluetoothManager.isBluetoothEnabled()) {
+                    throw Exception("Bluetooth is disabled")
                 }
 
-                Log.d(TAG, "Print job completed successfully")
-                printJob.complete()
+                // Connect to printer
+                Log.d(TAG, "Connecting to printer: ${printerConfig.address}")
+                bluetoothManager.connect(printerConfig.address).getOrThrow()
 
-            } finally {
-                // Always disconnect
-                bluetoothManager.disconnect()
+                try {
+                    // Process the PDF
+                    fd.use { pfd ->
+                        val pdfRenderer = ThermalPdfRenderer(pfd)
+
+                        Log.d(TAG, "PDF has ${pdfRenderer.pageCount} pages")
+
+                        pdfRenderer.use {
+                            for (pageIndex in 0 until pdfRenderer.pageCount) {
+                                Log.d(TAG, "Processing page ${pageIndex + 1}/${pdfRenderer.pageCount}")
+
+                                // Render page to thermal format
+                                val thermalData = pdfRenderer.renderPageToThermal(pageIndex, paperWidth)
+
+                                // Encode to ESC/POS
+                                val encoder = EscPosEncoder()
+                                    .initialize()
+                                    .image(thermalData.data, thermalData.width, thermalData.height)
+                                    .feed(settings.feedLinesAfterPrint)
+
+                                // Add cut between pages (except last)
+                                if (settings.autoCut && pageIndex < pdfRenderer.pageCount - 1) {
+                                    encoder.cut()
+                                }
+
+                                // Send to printer
+                                bluetoothManager.write(encoder.encode()).getOrThrow()
+
+                                // Small delay between pages
+                                if (pageIndex < pdfRenderer.pageCount - 1) {
+                                    delay(500)
+                                }
+                            }
+
+                            // Final cut if enabled
+                            if (settings.autoCut) {
+                                val finalEncoder = EscPosEncoder()
+                                    .feed(2)
+                                    .cut()
+                                bluetoothManager.write(finalEncoder.encode()).getOrThrow()
+                            }
+                        }
+                    }
+                } finally {
+                    // Always disconnect
+                    bluetoothManager.disconnect()
+                }
             }
+
+            Log.d(TAG, "Print job completed successfully")
+            // Complete must be on main thread
+            printJob.complete()
 
         } catch (e: Exception) {
             Log.e(TAG, "Print job failed: ${e.message}", e)
+            // Fail must be on main thread
             printJob.fail(e.message ?: "Print failed")
         }
     }

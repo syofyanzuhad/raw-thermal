@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#3b82f6"/>
+  <g fill="white">
+    <!-- Printer body -->
+    <rect x="96" y="180" width="320" height="180" rx="16"/>
+    <!-- Paper input -->
+    <rect x="144" y="100" width="224" height="100" rx="8"/>
+    <!-- Paper output -->
+    <rect x="144" y="340" width="224" height="120" rx="4" fill="#f3f4f6"/>
+    <!-- Paper lines -->
+    <rect x="168" y="365" width="176" height="8" rx="2" fill="#9ca3af"/>
+    <rect x="168" y="385" width="140" height="8" rx="2" fill="#9ca3af"/>
+    <rect x="168" y="405" width="160" height="8" rx="2" fill="#9ca3af"/>
+    <rect x="168" y="425" width="100" height="8" rx="2" fill="#9ca3af"/>
+    <!-- LED indicator -->
+    <circle cx="380" cy="220" r="12" fill="#22c55e"/>
+    <!-- Bluetooth symbol -->
+    <path d="M256 140 L256 260 L296 220 L256 180 L296 140 L256 180 L216 140 L256 180 L216 220 L256 260 L256 140"
+          stroke="#3b82f6" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+</svg>

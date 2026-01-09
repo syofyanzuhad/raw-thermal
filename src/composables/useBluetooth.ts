@@ -1,15 +1,48 @@
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { Capacitor } from '@capacitor/core'
 import { usePrinterStore } from '@/stores/printer'
 import { getBluetoothService } from '@/services/bluetooth/BluetoothService'
 import type { Printer } from '@/types/printer'
+
+// Platform detection
+const isNative = Capacitor.isNativePlatform()
+const isWeb = !isNative
+
+// Web Bluetooth support detection
+const hasWebBluetooth = typeof navigator !== 'undefined' && 'bluetooth' in navigator
 
 export function useBluetoothService() {
   const printerStore = usePrinterStore()
   const bluetoothService = getBluetoothService()
   const initialized = ref(false)
+  const platformSupported = ref(isNative || hasWebBluetooth)
+
+  // Platform info for UI
+  const platformInfo = computed(() => ({
+    isNative,
+    isWeb,
+    hasWebBluetooth,
+    supported: platformSupported.value,
+    message: getPlatformMessage()
+  }))
+
+  function getPlatformMessage(): string | null {
+    if (isNative) return null
+    if (!hasWebBluetooth) {
+      return 'Bluetooth tidak tersedia di browser ini. Gunakan Chrome/Edge atau install aplikasi Android untuk fitur Bluetooth.'
+    }
+    return 'Mode Web: Bluetooth terbatas. Install aplikasi Android untuk pengalaman terbaik.'
+  }
 
   async function initialize() {
     if (initialized.value) return
+
+    // Skip initialization if platform doesn't support Bluetooth
+    if (!platformSupported.value) {
+      printerStore.setError(getPlatformMessage())
+      return
+    }
+
     try {
       await bluetoothService.initialize()
       initialized.value = true
@@ -20,6 +53,7 @@ export function useBluetoothService() {
   }
 
   async function isAvailable(): Promise<boolean> {
+    if (!platformSupported.value) return false
     await initialize()
     return bluetoothService.isAvailable()
   }
@@ -114,6 +148,7 @@ export function useBluetoothService() {
     stopScan,
     connect,
     disconnect,
-    write
+    write,
+    platformInfo
   }
 }

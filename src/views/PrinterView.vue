@@ -4,7 +4,7 @@ import { usePrinterStore } from '@/stores/printer'
 import { useBluetoothService } from '@/composables/useBluetooth'
 
 const printerStore = usePrinterStore()
-const { startScan, stopScan, connect, disconnect, isAvailable } = useBluetoothService()
+const { startScan, stopScan, connect, disconnect, isAvailable, platformInfo } = useBluetoothService()
 
 const bluetoothAvailable = ref(true)
 const scanError = ref<string | null>(null)
@@ -56,8 +56,28 @@ onUnmounted(() => {
 
 <template>
   <div class="p-4 space-y-6">
+    <!-- Platform Warning (Web Browser) -->
+    <div v-if="platformInfo.isWeb && platformInfo.message" class="card bg-amber-50 border-amber-200">
+      <div class="flex items-start gap-3 text-amber-700">
+        <svg class="w-6 h-6 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div>
+          <p class="font-medium">Mode Browser</p>
+          <p class="text-sm">{{ platformInfo.message }}</p>
+          <a
+            v-if="!platformInfo.hasWebBluetooth"
+            href="#"
+            class="inline-block mt-2 text-sm font-medium text-amber-800 underline"
+          >
+            Download APK Android
+          </a>
+        </div>
+      </div>
+    </div>
+
     <!-- Bluetooth Status -->
-    <div v-if="!bluetoothAvailable" class="card bg-red-50 border-red-200">
+    <div v-if="!bluetoothAvailable && platformInfo.supported" class="card bg-red-50 border-red-200">
       <div class="flex items-center gap-3 text-red-700">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
@@ -99,9 +119,9 @@ onUnmounted(() => {
         <button
           v-if="!printerStore.isScanning"
           @click="handleStartScan"
-          :disabled="!bluetoothAvailable"
+          :disabled="!bluetoothAvailable || !platformInfo.supported"
           class="btn btn-primary"
-          :class="{ 'opacity-50 cursor-not-allowed': !bluetoothAvailable }"
+          :class="{ 'opacity-50 cursor-not-allowed': !bluetoothAvailable || !platformInfo.supported }"
         >
           <svg class="w-4 h-4 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>

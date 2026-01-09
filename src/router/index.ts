@@ -23,6 +23,11 @@ const router = createRouter({
       path: '/settings',
       name: 'settings',
       component: () => import('@/views/SettingsView.vue')
+    },
+    {
+      path: '/file-print',
+      name: 'file-print',
+      component: () => import('@/views/FilePrintView.vue')
     }
   ]
 })

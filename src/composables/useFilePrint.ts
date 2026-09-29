@@ -2,6 +2,8 @@ import { ref, computed, onUnmounted } from 'vue'
 import { usePrinterStore } from '@/stores/printer'
 import { useSettingsStore } from '@/stores/settings'
 import { useBluetoothService } from '@/composables/useBluetooth'
+import { usePaperColumns } from '@/composables/usePaper'
+import { usePrintService } from '@/composables/usePrint'
 import { createEncoder } from '@/services/escpos/EscPosEncoder'
 import {
   pickFile,
@@ -9,6 +11,7 @@ import {
   resizeImage,
   formatFileSize,
   imageDataToThermalFormat,
+  readTextFromBlob,
   type SelectedFile
 } from '@/services/file/FileService'
 import {
@@ -30,10 +33,14 @@ export function useFilePrint() {
   const printerStore = usePrinterStore()
   const settingsStore = useSettingsStore()
   const { write } = useBluetoothService()
+  const { printTextDocument } = usePrintService()
+  const columns = usePaperColumns()
 
   // State
   const selectedFile = ref<SelectedFile | null>(null)
   const pages = ref<PageItem[]>([])
+  const textContent = ref('')
+  const unmappedCharacters = ref<string[]>([])
   const isLoading = ref(false)
   const loadingMessage = ref('')
   const isPrinting = ref(false)
@@ -41,15 +48,16 @@ export function useFilePrint() {
   const error = ref<string | null>(null)
 
   // Computed
+  const isTextFile = computed(() => selectedFile.value?.type === 'text')
   const selectedPages = computed(() => pages.value.filter(p => p.selected))
   const selectedCount = computed(() => selectedPages.value.length)
   const hasFile = computed(() => selectedFile.value !== null)
-  const canPrint = computed(() =>
-    hasFile.value &&
-    selectedCount.value > 0 &&
-    printerStore.isConnected &&
-    !isPrinting.value
-  )
+  const canPrint = computed(() => {
+    if (!hasFile.value || isPrinting.value || !printerStore.isConnected) return false
+    // Text has no page selection to make, so a non-empty body is the only requirement.
+    if (isTextFile.value) return textContent.value.trim().length > 0
+    return selectedCount.value > 0
+  })
   const fileInfo = computed(() => {
     if (!selectedFile.value) return null
     return {
@@ -84,11 +92,15 @@ export function useFilePrint() {
     loadingMessage.value = 'Loading file...'
     error.value = null
     pages.value = []
+    textContent.value = ''
+    unmappedCharacters.value = []
     selectedFile.value = file
 
     try {
       if (file.type === 'pdf') {
         await loadPdfFile(file)
+      } else if (file.type === 'text') {
+        await loadTextFile(file)
       } else {
         await loadImageFile(file)
       }
@@ -121,6 +133,17 @@ export function useFilePrint() {
       width: t.width,
       height: t.height
     }))
+  }
+
+  /**
+   * Load a plain text file.
+   *
+   * No thumbnails: text is sent as ESC/POS text rather than rasterised, so it stays sharp
+   * and costs a fraction of the bytes an image of the same page would.
+   */
+  async function loadTextFile(file: SelectedFile) {
+    loadingMessage.value = 'Reading text...'
+    textContent.value = await readTextFromBlob(file.blob)
   }
 
   /**
@@ -174,75 +197,95 @@ export function useFilePrint() {
   }
 
   /**
-   * Print selected pages
+   * Print selected pages, or the text body when a text file is loaded.
+   *
+   * Returns whether everything was handed to the printer. Callers that own a queued job need
+   * this: clearing the job on a failed print would silently destroy the user's document.
    */
-  async function printSelected() {
-    if (!canPrint.value || !selectedFile.value) return
+  async function printSelected(): Promise<boolean> {
+    if (!canPrint.value || !selectedFile.value) return false
 
     isPrinting.value = true
-    printProgress.value = { current: 0, total: selectedCount.value }
     error.value = null
 
-    const paperWidth = settingsStore.settings.defaultPaperWidth === 58 ? 384 : 576 // dots
-
     try {
-      const pagesToPrint = [...selectedPages.value]
-
-      for (let i = 0; i < pagesToPrint.length; i++) {
-        const page = pagesToPrint[i]
-        if (!page) continue
-
-        printProgress.value.current = i + 1
-
-        let imageData: ImageData
-
-        if (selectedFile.value.type === 'pdf') {
-          // Render PDF page at full resolution
-          imageData = await renderPageFull(page.pageNum, paperWidth)
-        } else {
-          // Resize image to paper width
-          const img = await loadImageFromBlob(selectedFile.value.blob)
-          imageData = resizeImage(img, paperWidth)
-        }
-
-        // Convert to thermal printer format (1-bit dithered)
-        const thermalData = imageDataToThermalFormat(imageData)
-
-        // Encode and print
-        const encoder = createEncoder()
-        encoder.initialize()
-        encoder.image(thermalData.data, thermalData.width, thermalData.height)
-        encoder.feed(3)
-
-        // Add cut between pages (except last)
-        if (i < pagesToPrint.length - 1 && settingsStore.settings.autoCut) {
-          encoder.cut()
-        }
-
-        await write(encoder.encode())
-
-        // Small delay between pages
-        if (i < pagesToPrint.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500))
-        }
+      if (isTextFile.value) {
+        printProgress.value = { current: 1, total: 1 }
+        const result = await printTextDocument(textContent.value)
+        unmappedCharacters.value = result.unmapped
+        return true
       }
 
-      // Final cut if enabled
-      if (settingsStore.settings.autoCut) {
-        const encoder = createEncoder()
-        encoder.feed(settingsStore.settings.feedLinesAfterPrint)
-        encoder.cut()
-        await write(encoder.encode())
-      }
-
-      console.log('[useFilePrint] Print complete')
+      printProgress.value = { current: 0, total: selectedCount.value }
+      await printRasterPages()
+      return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Print failed'
       console.error('[useFilePrint] Print error:', err)
+      return false
     } finally {
       isPrinting.value = false
       printProgress.value = { current: 0, total: 0 }
     }
+  }
+
+  /**
+   * Print the selected PDF pages / image as dithered raster.
+   */
+  async function printRasterPages() {
+    if (!selectedFile.value) return
+
+    const paperWidth = settingsStore.settings.defaultPaperWidth === 58 ? 384 : 576 // dots
+    const pagesToPrint = [...selectedPages.value]
+
+    for (let i = 0; i < pagesToPrint.length; i++) {
+      const page = pagesToPrint[i]
+      if (!page) continue
+
+      printProgress.value.current = i + 1
+
+      let imageData: ImageData
+
+      if (selectedFile.value.type === 'pdf') {
+        // Render PDF page at full resolution
+        imageData = await renderPageFull(page.pageNum, paperWidth)
+      } else {
+        // Resize image to paper width
+        const img = await loadImageFromBlob(selectedFile.value.blob)
+        imageData = resizeImage(img, paperWidth)
+      }
+
+      // Convert to thermal printer format (1-bit dithered)
+      const thermalData = imageDataToThermalFormat(imageData)
+
+      // Encode and print
+      const encoder = createEncoder()
+      encoder.initialize()
+      encoder.image(thermalData.data, thermalData.width, thermalData.height)
+      encoder.feed(3)
+
+      // Add cut between pages (except last)
+      if (i < pagesToPrint.length - 1 && settingsStore.settings.autoCut) {
+        encoder.cut()
+      }
+
+      await write(encoder.encode())
+
+      // Small delay between pages
+      if (i < pagesToPrint.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    // Final cut if enabled
+    if (settingsStore.settings.autoCut) {
+      const encoder = createEncoder()
+      encoder.feed(settingsStore.settings.feedLinesAfterPrint)
+      encoder.cut()
+      await write(encoder.encode())
+    }
+
+    console.log('[useFilePrint] Print complete')
   }
 
   /**
@@ -251,6 +294,8 @@ export function useFilePrint() {
   async function clearFile() {
     selectedFile.value = null
     pages.value = []
+    textContent.value = ''
+    unmappedCharacters.value = []
     error.value = null
     await destroyDocument()
   }
@@ -264,6 +309,8 @@ export function useFilePrint() {
     // State
     selectedFile,
     pages,
+    textContent,
+    unmappedCharacters,
     isLoading,
     loadingMessage,
     isPrinting,
@@ -271,6 +318,8 @@ export function useFilePrint() {
     error,
 
     // Computed
+    isTextFile,
+    columns,
     selectedPages,
     selectedCount,
     hasFile,

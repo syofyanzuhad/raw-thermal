@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { usePrinterStore } from '@/stores/printer'
 import { useSettingsStore } from '@/stores/settings'
 import { useBluetoothService } from './useBluetooth'
+import { usePaperColumns } from './usePaper'
 import { EscPosEncoder, createEncoder } from '@/services/escpos/EscPosEncoder'
 import type { Alignment } from '@/services/escpos/EscPosEncoder'
 
@@ -18,6 +19,14 @@ export function usePrintService() {
   const { write } = useBluetoothService()
 
   const isPrinting = ref(false)
+
+  /** Effective column width for the loaded paper. */
+  const columns = usePaperColumns()
+
+  /** Encoder that already carries the code page from Settings. */
+  function newEncoder(): EscPosEncoder {
+    return createEncoder(settingsStore.settings.encoding)
+  }
 
   /**
    * Send raw ESC/POS data to printer
@@ -39,7 +48,7 @@ export function usePrintService() {
    * Print text with formatting options
    */
   async function printText(text: string, options: PrintTextOptions = {}): Promise<void> {
-    const encoder = createEncoder()
+    const encoder = newEncoder()
 
     encoder.initialize()
 
@@ -85,9 +94,8 @@ export function usePrintService() {
    * Print a test page
    */
   async function printTestPage(): Promise<void> {
-    const encoder = createEncoder()
-    const paperWidth = printerStore.currentPrinter?.paperWidth ?? settingsStore.settings.defaultPaperWidth
-    const lineWidth = paperWidth === 58 ? 32 : 48
+    const encoder = newEncoder()
+    const lineWidth = columns.value
 
     encoder
       .initialize()
@@ -158,9 +166,8 @@ export function usePrintService() {
     total: string
     footer?: string
   }): Promise<void> {
-    const encoder = createEncoder()
-    const paperWidth = printerStore.currentPrinter?.paperWidth ?? settingsStore.settings.defaultPaperWidth
-    const lineWidth = paperWidth === 58 ? 32 : 48
+    const encoder = newEncoder()
+    const lineWidth = columns.value
 
     encoder
       .initialize()
@@ -196,7 +203,7 @@ export function usePrintService() {
    * Print a QR code
    */
   async function printQRCode(content: string, size: number = 6): Promise<void> {
-    const encoder = createEncoder()
+    const encoder = newEncoder()
 
     encoder
       .initialize()
@@ -216,7 +223,7 @@ export function usePrintService() {
    * Print a barcode
    */
   async function printBarcode(content: string, type: 'CODE128' | 'EAN13' | 'CODE39' = 'CODE128'): Promise<void> {
-    const encoder = createEncoder()
+    const encoder = newEncoder()
 
     encoder
       .initialize()
@@ -233,16 +240,41 @@ export function usePrintService() {
   }
 
   /**
+   * Print a block of free-form text (a .txt file, or text shared from another app).
+   *
+   * Wraps to the paper width and reports characters the active code page cannot represent,
+   * so the caller can warn the user instead of silently printing '?' characters.
+   */
+  async function printTextDocument(content: string): Promise<{ unmapped: string[] }> {
+    const encoder = newEncoder()
+
+    encoder.initialize()
+    encoder.align('left')
+    encoder.textBlock(content, columns.value)
+    encoder.feed(settingsStore.settings.feedLinesAfterPrint)
+
+    if (settingsStore.settings.autoCut) {
+      encoder.cut()
+    }
+
+    const unmapped = encoder.unmapped
+    await printRaw(encoder.encode())
+    return { unmapped }
+  }
+
+  /**
    * Get an encoder for custom printing
    */
   function getEncoder(): EscPosEncoder {
-    return createEncoder()
+    return newEncoder()
   }
 
   return {
     isPrinting,
+    columns,
     printRaw,
     printText,
+    printTextDocument,
     printTestPage,
     printReceipt,
     printQRCode,

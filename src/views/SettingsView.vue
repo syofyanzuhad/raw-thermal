@@ -2,9 +2,19 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
+import { isCodepageId } from '@/services/escpos/codepages'
 
 const router = useRouter()
 const settingsStore = useSettingsStore()
+
+function handleEncodingChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  // Guard instead of a type assertion: a stale localStorage value or a hand-edited
+  // option must not be able to put an unknown codepage into the store.
+  if (isCodepageId(value)) {
+    settingsStore.updateSetting('encoding', value)
+  }
+}
 
 // Hidden developer menu - tap version 7 times
 const tapCount = ref(0)
@@ -73,13 +83,21 @@ function handleVersionTap() {
           <label class="block text-sm font-medium text-gray-700 mb-2">Character Encoding</label>
           <select
             :value="settingsStore.settings.encoding"
-            @change="settingsStore.updateSetting('encoding', ($event.target as HTMLSelectElement).value as 'UTF-8' | 'GB2312' | 'CP437')"
+            @change="handleEncodingChange"
             class="input"
           >
-            <option value="UTF-8">UTF-8 (Recommended)</option>
-            <option value="GB2312">GB2312 (Chinese)</option>
-            <option value="CP437">CP437 (DOS)</option>
+            <option
+              v-for="codepage in settingsStore.codepages"
+              :key="codepage.id"
+              :value="codepage.id"
+            >
+              {{ codepage.label }}
+            </option>
           </select>
+          <p class="mt-2 text-xs text-gray-500">
+            Must match the printer's code page. If accented characters or currency symbols
+            come out as garbage, switch to WPC1252 or CP850.
+          </p>
         </div>
 
         <!-- Print Density -->

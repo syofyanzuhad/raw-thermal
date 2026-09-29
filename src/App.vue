@@ -2,11 +2,15 @@
 import { RouterView, RouterLink, useRoute } from 'vue-router'
 import { computed, onMounted } from 'vue'
 import { usePrinterStore } from '@/stores/printer'
+import { useIncomingJobs } from '@/composables/useIncomingJobs'
 import { Capacitor } from '@capacitor/core'
 import { StatusBar, Style } from '@capacitor/status-bar'
 
 const route = useRoute()
 const printerStore = usePrinterStore()
+
+// Lives here so a share from another app is picked up whichever screen is open.
+useIncomingJobs()
 
 onMounted(async () => {
   // Configure status bar for native platforms

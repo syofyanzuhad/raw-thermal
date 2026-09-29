@@ -1,20 +1,44 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { usePrinterStore } from '@/stores/printer'
+import { useIncomingStore } from '@/stores/incoming'
 import { useBluetoothService } from '@/composables/useBluetooth'
+import { buildIncomingJob } from '@/services/share/incoming'
 import {
   hasPendingPrintJobsNative,
+  getPendingJobDataNative,
+  removePendingPrintJobNative,
   clearPendingPrintJobsNative,
   type PendingPrintJob
 } from '@/services/native/PrinterConfigBridge'
+import type { Printer, TransportDevice } from '@/types/printer'
 
+const router = useRouter()
 const printerStore = usePrinterStore()
-const { startScan, stopScan, connect, disconnect, isAvailable, platformInfo } = useBluetoothService()
+const incoming = useIncomingStore()
+
+const {
+  startScan,
+  stopScan,
+  connect,
+  connectClassic,
+  connectSaved,
+  disconnect,
+  isAvailable,
+  isClassicAvailable,
+  listPairedDevices,
+  platformInfo
+} = useBluetoothService()
 
 const bluetoothAvailable = ref(true)
 const scanError = ref<string | null>(null)
 const pendingJobs = ref<PendingPrintJob[]>([])
 const hasPendingJob = ref(false)
+
+const classicAvailable = ref(false)
+const pairedDevices = ref<TransportDevice[]>([])
+const classicError = ref<string | null>(null)
 
 async function handleStartScan() {
   scanError.value = null
@@ -36,12 +60,40 @@ async function handleStopScan() {
 async function handleConnect(deviceId: string, name: string | null) {
   try {
     await connect(deviceId, name)
-    // After successful connect, check and process pending print jobs
-    if (hasPendingJob.value) {
-      await processPendingJobs()
-    }
+    // A printer exists now, so anything the print framework queued can finally go out.
+    await processPendingJobs()
   } catch (err) {
     printerStore.setError(err instanceof Error ? err.message : 'Failed to connect')
+  }
+}
+
+async function handleConnectSaved(printer: Printer) {
+  try {
+    await connectSaved(printer)
+    await processPendingJobs()
+  } catch (err) {
+    printerStore.setError(err instanceof Error ? err.message : 'Failed to connect')
+  }
+}
+
+/** Devices already paired in Android's Bluetooth settings. */
+async function loadPairedDevices() {
+  if (!classicAvailable.value) return
+  classicError.value = null
+  try {
+    pairedDevices.value = await listPairedDevices()
+  } catch (err) {
+    classicError.value = err instanceof Error ? err.message : 'Failed to list paired devices'
+  }
+}
+
+async function handleConnectClassic(device: TransportDevice) {
+  classicError.value = null
+  try {
+    await connectClassic(device.deviceId, device.name)
+    await processPendingJobs()
+  } catch (err) {
+    classicError.value = err instanceof Error ? err.message : 'Failed to connect'
   }
 }
 
@@ -51,13 +103,58 @@ async function checkPendingJobs() {
   pendingJobs.value = result.jobs
 }
 
+/**
+ * Send the oldest queued print job to the print screen.
+ *
+ * The job was queued by the Android print framework while no printer was configured, so the
+ * user already asked to print it. FilePrintView prints it without further taps once it loads.
+ *
+ * Only one job is taken at a time: printing is serial anyway, and the user should see what is
+ * about to come out of the printer before the next one starts.
+ */
 async function processPendingJobs() {
-  // TODO: Process pending jobs by reading the PDF and printing
-  // For now, just clear them after connecting - actual printing will happen via native PrintService
-  console.log('[PrinterView] Processing pending jobs:', pendingJobs.value)
+  const { jobs } = await hasPendingPrintJobsNative()
+  const next = jobs[0]
+
+  if (!next) {
+    hasPendingJob.value = false
+    pendingJobs.value = []
+    return
+  }
+
+  const data = await getPendingJobDataNative(next.id)
+
+  if (!data) {
+    // The cached document is gone (cache cleared, app reinstalled). Dropping the entry keeps a
+    // dead job from blocking the queue forever.
+    await removePendingPrintJobNative(next.id)
+    await checkPendingJobs()
+    return
+  }
+
+  const result = buildIncomingJob({
+    source: 'pending-job',
+    jobId: next.id,
+    name: data.title,
+    mimeType: data.mimeType,
+    base64: data.base64,
+    autoPrint: true
+  })
+
+  if (!result.ok) {
+    await removePendingPrintJobNative(next.id)
+    await checkPendingJobs()
+    incoming.setProblem(result.reason)
+    return
+  }
+
+  incoming.set(result.job)
+  await router.push('/file-print')
+}
+
+async function discardPendingJobs() {
   await clearPendingPrintJobsNative()
-  hasPendingJob.value = false
-  pendingJobs.value = []
+  await checkPendingJobs()
 }
 
 function handlePendingPrintJobEvent() {
@@ -79,6 +176,10 @@ onMounted(async () => {
 
   // Check for pending print jobs
   checkPendingJobs()
+
+  // Bluetooth Classic is a separate radio from BLE, so it has its own availability check.
+  classicAvailable.value = await isClassicAvailable()
+  loadPairedDevices()
 
   // Listen for pending print job events from native
   window.addEventListener('pendingPrintJob', handlePendingPrintJobEvent)
@@ -103,6 +204,14 @@ onUnmounted(() => {
         <div class="flex-1">
           <p class="font-medium">Dokumen Menunggu Dicetak</p>
           <p class="text-sm">{{ pendingJobs.length }} dokumen dalam antrian. Pilih printer untuk melanjutkan.</p>
+          <div class="flex gap-2 mt-3">
+            <button @click="processPendingJobs" class="btn bg-yellow-100 text-yellow-800 hover:bg-yellow-200 text-sm">
+              Print now
+            </button>
+            <button @click="discardPendingJobs" class="btn bg-white text-yellow-800 hover:bg-yellow-100 text-sm">
+              Discard
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -151,7 +260,10 @@ onUnmounted(() => {
           </div>
           <div>
             <p class="font-medium text-green-800">{{ printerStore.currentPrinter.name }}</p>
-            <p class="text-sm text-green-600">Connected</p>
+            <p class="text-sm text-green-600">
+              Connected
+              <span v-if="printerStore.currentPrinter.transport === 'classic'">· Bluetooth Classic</span>
+            </p>
           </div>
         </div>
         <button
@@ -163,7 +275,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Scan Section -->
+    <!-- Scan Section (BLE) -->
     <div class="card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold text-gray-800">Find Printers</h2>
@@ -248,6 +360,56 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Paired Devices (Bluetooth Classic SPP) -->
+    <div v-if="classicAvailable" class="card">
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="text-lg font-semibold text-gray-800">Paired Printers</h2>
+        <button @click="loadPairedDevices" class="text-sm text-primary-600 font-medium">
+          Refresh
+        </button>
+      </div>
+      <p class="text-xs text-gray-500 mb-4">
+        Bluetooth Classic printers — most cheap ESC/POS models — never appear in a BLE scan.
+        Pair yours in Android Settings → Bluetooth, then connect it here.
+      </p>
+
+      <div v-if="classicError" class="mb-3 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
+        {{ classicError }}
+      </div>
+
+      <div v-if="pairedDevices.length > 0" class="space-y-2">
+        <div
+          v-for="device in pairedDevices"
+          :key="device.deviceId"
+          class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+        >
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
+              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m7.656-4.344a4 4 0 00-5.656 0l-3 3a4 4 0 005.656 5.656"/>
+              </svg>
+            </div>
+            <div>
+              <p class="font-medium text-gray-900">{{ device.name || 'Unnamed device' }}</p>
+              <p class="text-xs text-gray-500">{{ device.deviceId }}</p>
+            </div>
+          </div>
+          <button
+            @click="handleConnectClassic(device)"
+            :disabled="printerStore.isConnecting"
+            class="btn btn-primary text-sm"
+            :class="{ 'opacity-50 cursor-not-allowed': printerStore.isConnecting }"
+          >
+            {{ printerStore.isConnecting ? 'Connecting...' : 'Connect' }}
+          </button>
+        </div>
+      </div>
+
+      <p v-else class="text-sm text-gray-400 py-4 text-center">
+        No paired devices yet. Pair your printer in Android Settings → Bluetooth first.
+      </p>
+    </div>
+
     <!-- Saved Printers -->
     <div v-if="printerStore.savedPrinters.length > 0" class="card">
       <h2 class="text-lg font-semibold text-gray-800 mb-4">Saved Printers</h2>
@@ -265,12 +427,15 @@ onUnmounted(() => {
             </div>
             <div>
               <p class="font-medium text-gray-900">{{ printer.name }}</p>
-              <p class="text-xs text-gray-500">{{ printer.paperWidth }}mm paper</p>
+              <p class="text-xs text-gray-500">
+                {{ printer.paperWidth }}mm paper
+                <span v-if="printer.transport === 'classic'">· Classic</span>
+              </p>
             </div>
           </div>
           <div class="flex items-center gap-2">
             <button
-              @click="handleConnect(printer.address, printer.name)"
+              @click="handleConnectSaved(printer)"
               class="btn btn-outline text-sm py-1"
             >
               Connect

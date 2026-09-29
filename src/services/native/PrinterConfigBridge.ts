@@ -7,6 +7,13 @@ export interface PendingPrintJob {
   timestamp: number
 }
 
+/** The queued document itself, as the Android side stored it. */
+export interface PendingJobData {
+  title: string
+  mimeType: string
+  base64: string
+}
+
 interface PrinterConfigPlugin {
   syncPrinterConfig(options: {
     printers: Printer[]
@@ -32,6 +39,7 @@ interface PrinterConfigPlugin {
     path: string
     title: string
   }>
+  getPendingJobData(options: { jobId: string }): Promise<PendingJobData>
   removePendingPrintJob(options: { jobId: string }): Promise<void>
 }
 
@@ -164,6 +172,26 @@ export async function getPendingJobDocumentPathNative(jobId: string): Promise<{
     return await PrinterConfig.getPendingJobDocumentPath({ jobId })
   } catch (error) {
     console.error('[PrinterConfigBridge] Failed to get job path:', error)
+    return null
+  }
+}
+
+/**
+ * Read the queued document's bytes.
+ *
+ * The web layer cannot open the cache path the job stores, so the file comes across as base64.
+ * This is what turns a blocked print job into something the in-app pipeline can actually
+ * print, instead of a job that is discarded.
+ */
+export async function getPendingJobDataNative(jobId: string): Promise<PendingJobData | null> {
+  if (!Capacitor.isNativePlatform()) {
+    return null
+  }
+
+  try {
+    return await PrinterConfig.getPendingJobData({ jobId })
+  } catch (error) {
+    console.error('[PrinterConfigBridge] Failed to read job data:', error)
     return null
   }
 }

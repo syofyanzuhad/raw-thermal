@@ -1,48 +1,13 @@
-import { Capacitor } from '@capacitor/core'
-import { App } from '@capacitor/app'
+import {
+  getFileType,
+  getFileTypeFromName,
+  type SelectedFile
+} from './fileTypes.ts'
 
-export interface SelectedFile {
-  name: string
-  type: 'pdf' | 'image'
-  mimeType: string
-  blob: Blob
-  size: number
-}
-
-export interface ShareIntentData {
-  url?: string
-  title?: string
-  mimeType?: string
-}
-
-// Supported MIME types
-const SUPPORTED_TYPES = {
-  'application/pdf': 'pdf',
-  'image/jpeg': 'image',
-  'image/jpg': 'image',
-  'image/png': 'image',
-  'image/webp': 'image',
-  'image/bmp': 'image',
-} as const
-
-type SupportedMimeType = keyof typeof SUPPORTED_TYPES
-
-/**
- * Check if MIME type is supported
- */
-export function isSupportedType(mimeType: string): mimeType is SupportedMimeType {
-  return mimeType in SUPPORTED_TYPES
-}
-
-/**
- * Get file type from MIME type
- */
-export function getFileType(mimeType: string): 'pdf' | 'image' | null {
-  if (isSupportedType(mimeType)) {
-    return SUPPORTED_TYPES[mimeType]
-  }
-  return null
-}
+// The classification tables live in a dependency-free module so they can be unit tested and
+// reused by the share-intent parser. Re-exported here to keep this module's API unchanged.
+export type { SelectedFile }
+export { getFileType, getFileTypeFromName, isSupportedType, SUPPORTED_TYPES } from './fileTypes.ts'
 
 /**
  * Pick a file using native file picker or HTML input
@@ -51,7 +16,7 @@ export async function pickFile(): Promise<SelectedFile | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = 'application/pdf,image/jpeg,image/png,image/webp,image/bmp'
+    input.accept = 'application/pdf,image/jpeg,image/png,image/webp,image/bmp,text/plain,.txt'
 
     input.onchange = async (event) => {
       const file = (event.target as HTMLInputElement).files?.[0]
@@ -60,9 +25,9 @@ export async function pickFile(): Promise<SelectedFile | null> {
         return
       }
 
-      const fileType = getFileType(file.type)
+      const fileType = getFileType(file.type) ?? getFileTypeFromName(file.name)
       if (!fileType) {
-        console.error('[FileService] Unsupported file type:', file.type)
+        console.error('[FileService] Unsupported file type:', file.type, file.name)
         resolve(null)
         return
       }
@@ -82,6 +47,17 @@ export async function pickFile(): Promise<SelectedFile | null> {
 
     input.click()
   })
+}
+
+/**
+ * Read a text file as a string.
+ *
+ * A leading UTF-8 BOM is stripped so its bytes are not printed as stray characters at the
+ * start of the document.
+ */
+export async function readTextFromBlob(blob: Blob): Promise<string> {
+  const text = await blob.text()
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
 }
 
 /**
@@ -126,51 +102,12 @@ export function resizeImage(
   return ctx.getImageData(0, 0, targetWidth, targetHeight)
 }
 
-/**
- * Setup share intent listener (Android)
- */
-export function setupShareIntentListener(
-  onShare: (data: ShareIntentData) => void
-): () => void {
-  if (!Capacitor.isNativePlatform()) {
-    return () => {} // No-op for web
-  }
-
-  let listenerHandle: { remove: () => void } | null = null
-
-  // Check for launch URL (app opened via share)
-  App.getLaunchUrl().then((launchUrl) => {
-    if (launchUrl?.url) {
-      console.log('[FileService] App launched with URL:', launchUrl.url)
-      onShare({ url: launchUrl.url })
-    }
-  })
-
-  // Listen for app URL open events
-  App.addListener('appUrlOpen', (data) => {
-    console.log('[FileService] App URL opened:', data.url)
-    onShare({ url: data.url })
-  }).then((handle) => {
-    listenerHandle = handle
-  })
-
-  return () => {
-    listenerHandle?.remove()
-  }
-}
-
-/**
- * Fetch file from content:// or file:// URI (Android)
- */
-export async function fetchFileFromUri(uri: string): Promise<Blob | null> {
-  try {
-    const response = await fetch(uri)
-    return await response.blob()
-  } catch (error) {
-    console.error('[FileService] Failed to fetch file from URI:', error)
-    return null
-  }
-}
+// Removed: `setupShareIntentListener` / `fetchFileFromUri` / `ShareIntentData`.
+// They were the old share mechanism and could never work: `App.getLaunchUrl()` and the
+// `appUrlOpen` event only fire for URL schemes / deep links, while an Android share sends
+// EXTRA_TEXT / EXTRA_STREAM. Sharing is now handled by `useIncomingJobs()` +
+// `src/services/native/ShareIntentBridge.ts`, which read the intent through a real plugin.
+// See docs/plans/2026-09-29-rawbt-parity-analysis.md (K-1).
 
 /**
  * Format file size to human readable string

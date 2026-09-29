@@ -3,6 +3,13 @@
  * Reference: https://reference.epson-biz.com/modules/ref_escpos/index.php
  */
 
+// The `.ts` extension is written explicitly (allowed by `allowImportingTsExtensions`) so this
+// module can be executed directly by Node's built-in test runner without a bundler.
+import { DEFAULT_CODEPAGE, encodeTextWithReport, getCodepage } from './codepages.ts'
+import type { CodepageId } from './codepages.ts'
+
+export type { CodepageId }
+
 export type Alignment = 'left' | 'center' | 'right'
 export type FontSize = 'normal' | 'double-height' | 'double-width' | 'double'
 export type BarcodeType = 'UPC-A' | 'UPC-E' | 'EAN13' | 'EAN8' | 'CODE39' | 'ITF' | 'CODABAR' | 'CODE93' | 'CODE128'
@@ -12,19 +19,95 @@ const ESC = 0x1B
 const GS = 0x1D
 const LF = 0x0A
 
+/**
+ * Wrap text to the paper's column width.
+ *
+ * Without this, long text coming from a file or a share intent runs off the paper, because
+ * thermal printers do not word-wrap on their own.
+ *
+ * Blank lines are preserved, and a word longer than one line is hard-broken so that no line
+ * can ever exceed the paper width.
+ */
+export function wrapText(text: string, columns: number): string[] {
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const result: string[] = []
+
+  for (const paragraph of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const words = paragraph.split(' ').filter(word => word.length > 0)
+
+    if (words.length === 0) {
+      result.push('')
+      continue
+    }
+
+    let line = ''
+    for (const word of words) {
+      if (word.length > safeColumns) {
+        if (line !== '') {
+          result.push(line)
+          line = ''
+        }
+        let rest = word
+        while (rest.length > safeColumns) {
+          result.push(rest.slice(0, safeColumns))
+          rest = rest.slice(safeColumns)
+        }
+        line = rest
+        continue
+      }
+
+      if (line === '') {
+        line = word
+      } else if (line.length + 1 + word.length <= safeColumns) {
+        line += ' ' + word
+      } else {
+        result.push(line)
+        line = word
+      }
+    }
+
+    result.push(line)
+  }
+
+  return result
+}
+
 export class EscPosEncoder {
   private buffer: number[] = []
+  private encoding: CodepageId
+  private unmappedChars: string[] = []
 
-  constructor(_encoding: string = 'utf-8') {
-    // Encoding parameter reserved for future charset support
+  constructor(encoding: CodepageId = DEFAULT_CODEPAGE) {
+    this.encoding = encoding
   }
 
   /**
-   * Initialize the printer (ESC @)
+   * Initialize the printer (ESC @) and select the character code table (ESC t n).
+   *
+   * ESC t lives here rather than at every call site because ESC @ resets the printer to its
+   * default code table, so the order matters: ESC t must follow it. This way every printing
+   * path picks up the code page from Settings without anyone having to remember.
    */
   initialize(): this {
     this.buffer.push(ESC, 0x40)
+    this.selectCodepageBytes(this.encoding)
     return this
+  }
+
+  /**
+   * Select a character code table mid-stream (ESC t n).
+   */
+  codepage(id: CodepageId): this {
+    this.encoding = id
+    this.selectCodepageBytes(id)
+    return this
+  }
+
+  private selectCodepageBytes(id: CodepageId): void {
+    const table = getCodepage(id).escposTable
+    if (table !== null) {
+      this.buffer.push(ESC, 0x74, table)
+    }
   }
 
   /**
@@ -71,12 +154,27 @@ export class EscPosEncoder {
   }
 
   /**
-   * Print text and convert to bytes
+   * Print text, encoded for the active character code table.
+   *
+   * Characters missing from that table are transliterated to ASCII; when there is no
+   * stand-in they are sent as '?' and recorded in `unmapped` so the UI can warn the user
+   * instead of silently printing garbage.
    */
   text(content: string): this {
-    const encoder = new TextEncoder()
-    const bytes = encoder.encode(content)
-    this.buffer.push(...bytes)
+    const { bytes, unmapped } = encodeTextWithReport(content, this.encoding)
+
+    // Push one at a time instead of spreading: argument spread has an element limit and
+    // throws RangeError on large payloads.
+    for (const byte of bytes) {
+      this.buffer.push(byte)
+    }
+
+    for (const char of unmapped) {
+      if (!this.unmappedChars.includes(char)) {
+        this.unmappedChars.push(char)
+      }
+    }
+
     return this
   }
 
@@ -93,6 +191,17 @@ export class EscPosEncoder {
    */
   line(content: string): this {
     return this.text(content).newline()
+  }
+
+  /**
+   * Print long text, wrapped automatically to the paper's column width.
+   * Used for .txt file contents and text arriving from a share intent.
+   */
+  textBlock(content: string, columns: number): this {
+    for (const line of wrapText(content, columns)) {
+      this.line(line)
+    }
+    return this
   }
 
   /**
@@ -134,7 +243,11 @@ export class EscPosEncoder {
 
     // GS v 0 mode xL xH yL yH [image data]
     this.buffer.push(GS, 0x76, 0x30, 0x00, xL, xH, yL, yH)
-    this.buffer.push(...imageData)
+    // Push one at a time instead of spreading: a single raster page can be tens of thousands
+    // of bytes, and argument spread has an element limit that throws RangeError.
+    for (const byte of imageData) {
+      this.buffer.push(byte)
+    }
     return this
   }
 
@@ -282,9 +395,17 @@ export class EscPosEncoder {
   get length(): number {
     return this.buffer.length
   }
+
+  /**
+   * Characters that the active code page cannot represent and that were sent as '?'.
+   * Empty means everything printed so far is safe.
+   */
+  get unmapped(): string[] {
+    return [...this.unmappedChars]
+  }
 }
 
 // Factory function for convenience
-export function createEncoder(encoding?: string): EscPosEncoder {
+export function createEncoder(encoding: CodepageId = DEFAULT_CODEPAGE): EscPosEncoder {
   return new EscPosEncoder(encoding)
 }

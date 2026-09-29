@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    /* Test dijalankan oleh Node, jadi tipe Node yang dipakai. Konfigurasi app sengaja
+       tidak menyertakannya supaya kode aplikasi tidak bisa memakai API Node secara tidak sengaja. */
+    "types": ["node"]
+  },
+  "include": [
+    "tests/**/*.ts",
+    "src/services/escpos/**/*.ts",
+    "src/services/share/**/*.ts",
+    "src/services/file/fileTypes.ts",
+    "src/services/transport/base64.ts"
+  ]
+}

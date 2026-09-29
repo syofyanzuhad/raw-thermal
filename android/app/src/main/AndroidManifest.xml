@@ -36,12 +36,31 @@
                 <data android:mimeType="application/pdf" />
             </intent-filter>
 
+            <!--
+                Share Intent: Receive plain text.
+                This is what makes "print text from Gmail, WhatsApp, Word" work: those apps
+                share a selection as text/plain with EXTRA_TEXT, and without this filter the
+                app never appears in their share sheet.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
             <!-- View Intent: Open PDFs and images -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
                 <data android:mimeType="application/pdf" />
+            </intent-filter>
+
+            <!-- View Intent: Open text files from a file manager -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
 
         </activity>

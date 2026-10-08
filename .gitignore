@@ -30,6 +30,7 @@ dist-ssr
 # Tool caches
 .playwright-mcp/
 .serena/
+.workbuddy-ai/
 dev-dist/
 release-key.jks
 *.idsig

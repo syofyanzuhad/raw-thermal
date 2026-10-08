@@ -12,16 +12,10 @@ Built as a free alternative to [RawBT](https://github.com/402d/RawbtAPI).
 
 ---
 
-## Project status — read this first
+## Project status
 
-The TypeScript side is verified: **60 tests pass**, `typecheck` is clean, `build` succeeds.
-
-**The Kotlin side has never been compiled on the machine this code was developed on** — that
-machine only has JDK 8/12, while Capacitor 8 requires JDK 17+ (`JavaVersion.VERSION_21`) and
-`compileSdk 35`. The Kotlin code was written carefully and every Capacitor API it calls was
-checked against the installed `@capacitor/android` sources, but it has not been built or run.
-Do not assume the Android features work until the project has been built and tested on a
-device. See [Building the Android app](#building-the-android-app).
+- **TypeScript side:** Verified (**60 tests pass**, `typecheck` is clean, `build` succeeds).
+- **Android / Kotlin side:** Built and compiled successfully with JDK 21 (`./gradlew assembleDebug` produces `app-debug.apk`). See [Building the Android app](#building-the-android-app).
 
 ---
 
@@ -274,7 +268,6 @@ docs/plans/         design notes and the RawBT parity analysis
 
 ## Known limitations
 
-- **The Android code has not been built or run yet.** Verified: TypeScript only.
 - **No USB OTG and no network printing** (WiFi/Ethernet port 9100).
 - **No `PRINT_RAWBT` intent API**, so third-party POS apps cannot hand raw ESC/POS bytes to
   this app the way they can with RawBT.
